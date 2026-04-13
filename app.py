@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # CẤU HÌNH HỆ THỐNG
 # ==========================================
-DATABASE_NAME = 'sales_manager_v10.db' # Phiên bản chốt lịch sử giá
+DATABASE_NAME = 'sales_manager_v10.db' # Vẫn dùng DB v10 để không mất dữ liệu cũ của bạn
 
 enter_to_tab_js = """
 <script>
@@ -31,7 +31,6 @@ enter_to_tab_js = """
 def init_db():
     conn = sqlite3.connect(DATABASE_NAME)
     c = conn.cursor()
-    # Bảng history giờ đây sẽ lưu thêm gia_nhap, gia_ban, phi_san
     c.execute('''CREATE TABLE IF NOT EXISTS history 
                  (ngay TEXT, ma_hang TEXT, so_don INTEGER, so_hoan INTEGER, tien_ads REAL, loi_nhuan REAL,
                  gia_nhap REAL, gia_ban REAL, phi_san REAL,
@@ -65,19 +64,15 @@ def save_smart_history(ngay, ma_hang, input_q, input_h, input_a, current_info):
     conn = sqlite3.connect(DATABASE_NAME)
     c = conn.cursor()
     
-    # Kiểm tra xem ngày này đã từng được lưu chưa
     c.execute("SELECT so_don, so_hoan, tien_ads, gia_nhap, gia_ban, phi_san FROM history WHERE ngay=? AND ma_hang=?", (ngay, ma_hang))
     existing = c.fetchone()
 
     if existing:
-        # Nếu ĐÃ CÓ: Lấy số lượng cũ và GIÁ CŨ ĐÃ KHÓA
         old_q, old_h, old_a, used_nhap, used_ban, used_phi = existing
     else:
-        # Nếu CHƯA CÓ (Thêm mới): Lấy GIÁ MỚI NHẤT từ cấu hình
         old_q, old_h, old_a = 0, 0, 0
         used_nhap, used_ban, used_phi = current_info['nhap'], current_info['ban'], current_info['phi']
 
-    # Xử lý cập nhật một phần (Partial update)
     final_q = input_q if input_q is not None else old_q
     final_h = input_h if input_h is not None else old_h
     final_a = input_a if input_a is not None else old_a
@@ -86,7 +81,6 @@ def save_smart_history(ngay, ma_hang, input_q, input_h, input_a, current_info):
         conn.close()
         return False, f"Lỗi: Số đơn hoàn ({final_h}) > đơn bán ({final_q})."
 
-    # Tính toán lợi nhuận dựa trên GIÁ ĐÃ CHỐT
     so_don_thanh_cong = final_q - final_h
     lai_thuc = (so_don_thanh_cong * used_ban) - (so_don_thanh_cong * (used_nhap + used_phi)) - final_a
 
@@ -127,7 +121,6 @@ if chuc_nang == "💰 Ghi Nhận Doanh Thu":
     if not DANH_SACH_HANG:
         st.warning("⚠️ Chưa có mặt hàng nào. Vui lòng chuyển sang mục 'Quản Lý Mặt Hàng'!")
     else:
-        # Cấu trúc nhập liệu
         c_ma, c_ngay = st.columns([2, 1])
         with c_ma:
             ma_selected = st.selectbox("👉 Chọn mã hàng:", list(DANH_SACH_HANG.keys()))
@@ -136,7 +129,6 @@ if chuc_nang == "💰 Ghi Nhận Doanh Thu":
             
         info = DANH_SACH_HANG[ma_selected]
         
-        # KIỂM TRA XEM NGÀY NÀY ĐÃ TỪNG LƯU GIÁ CŨ CHƯA ĐỂ HIỂN THỊ CẢNH BÁO
         conn = sqlite3.connect(DATABASE_NAME)
         c = conn.cursor()
         c.execute("SELECT gia_nhap, gia_ban, phi_san, so_don, so_hoan, tien_ads FROM history WHERE ngay=? AND ma_hang=?", (str(ngay), ma_selected))
@@ -157,7 +149,6 @@ if chuc_nang == "💰 Ghi Nhận Doanh Thu":
         with c2: h = st.number_input("Số đơn HOÀN (-)", min_value=0, step=1, value=None, key=f"h_{st.session_state.reset_counter}", placeholder="Để trống nếu không đổi")
         with c3: a = st.number_input("Tiền Ads (VNĐ)", min_value=0, step=10000, value=None, key=f"a_{st.session_state.reset_counter}", placeholder="Để trống nếu không đổi")
 
-        # Logic tính kết quả tạm thời
         temp_q = q if q is not None else old_q
         temp_h = h if h is not None else old_h
         temp_a = a if a is not None else old_a
@@ -186,13 +177,33 @@ if chuc_nang == "💰 Ghi Nhận Doanh Thu":
 
         st.divider()
         df_raw = load_history()
+        
         if not df_raw.empty:
+            # 1. Vẽ Bảng
+            st.subheader("📅 Nhật ký doanh thu tổng hợp")
             df_sums = df_raw.groupby('ngay').agg({'so_don': 'sum', 'so_hoan': 'sum', 'tien_ads': 'sum', 'loi_nhuan': 'sum'}).reset_index()
             df_details = df_raw.groupby('ngay').apply(lambda x: ", ".join([f"{m}: {int(s)} (-{int(h)})" for m, s, h in zip(x['ma_hang'], x['so_don'], x['so_hoan']) if s > 0 or h > 0])).reset_index(name='chi_tiet')
             df_final = pd.merge(df_sums, df_details, on='ngay').sort_values('ngay', ascending=False)
-            res_df = pd.concat([df_final, pd.DataFrame({'ngay': ['TỔNG CỘNG'], 'chi_tiet': ['-'], 'so_don': [df_final['so_don'].sum()], 'so_hoan': [df_final['so_hoan'].sum()], 'tien_ads': [df_final['tien_ads'].sum()], 'loi_nhuan': [df_final['loi_nhuan'].sum()]})], ignore_index=True)
-            res_df['tien_ads'] = res_df['tien_ads'].apply(lambda x: f"{x:,.0f} đ"); res_df['loi_nhuan'] = res_df['loi_nhuan'].apply(lambda x: f"{x:,.0f} đ")
+            
+            total_row = pd.DataFrame({'ngay': ['TỔNG CỘNG'], 'chi_tiet': ['-'], 'so_don': [df_final['so_don'].sum()], 'so_hoan': [df_final['so_hoan'].sum()], 'tien_ads': [df_final['tien_ads'].sum()], 'loi_nhuan': [df_final['loi_nhuan'].sum()]})
+            res_df = pd.concat([df_final, total_row], ignore_index=True)
+            res_df['tien_ads'] = res_df['tien_ads'].apply(lambda x: f"{x:,.0f} đ")
+            res_df['loi_nhuan'] = res_df['loi_nhuan'].apply(lambda x: f"{x:,.0f} đ")
+            
             st.dataframe(res_df.rename(columns={'ngay': 'Ngày', 'chi_tiet': 'Mã: Bán (-Hoàn)', 'so_don': 'Tổng Bán', 'so_hoan': 'Tổng Hoàn', 'tien_ads': 'Tổng Ads', 'loi_nhuan': 'Tổng Lãi'}), use_container_width=True, hide_index=True)
+
+            # 2. VẼ BIỂU ĐỒ ĐA ĐƯỜNG (MỚI)
+            st.divider()
+            st.subheader("📈 Biểu đồ Lợi Nhuận theo từng mặt hàng")
+            
+            # Xoay trục dữ liệu gốc: Lấy Ngày làm trục X, Mã hàng làm Cột, Lợi nhuận làm Giá trị
+            chart_data = df_raw.pivot_table(index='ngay', columns='ma_hang', values='loi_nhuan', aggfunc='sum', fill_value=0)
+            
+            # Streamlit sẽ tự động vẽ mỗi mã hàng thành 1 đường màu khác nhau
+            st.line_chart(chart_data)
+            
+        else:
+            st.info("Chưa có dữ liệu bán hàng.")
 
 # ==========================================
 # PHÂN HỆ 2: QUẢN LÝ MẶT HÀNG
